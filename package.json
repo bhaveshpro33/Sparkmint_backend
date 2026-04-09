@@ -1,0 +1,29 @@
+{
+  "name": "sparkmint-backend",
+  "version": "1.0.0",
+  "description": "SparkMint NFT Platform – Off-chain backend API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-async-handler": "^1.2.0",
+    "mongoose": "^8.0.3",
+    "multer": "^2.1.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "keywords": [
+    "nft",
+    "creator-platform",
+    "express",
+    "mongodb"
+  ],
+  "author": "SparkMint Team",
+  "license": "MIT"
+}
