@@ -6,8 +6,8 @@
  */
 
 const { ethers } = require("ethers");
-const SparkMintABI = require("../abi/SparkMint.json");
-const CreatorSubscriptionABI = require("../abi/CreatorSubscription.json");
+const SparkMintABI = require("../abi/SparkMint.json").abi;
+const CreatorSubscriptionABI = require("../abi/CreatorSubscription.json").abi;
 
 // ─────────────────────────────────────────────
 //  Setup provider and relayer wallet
