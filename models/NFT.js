@@ -72,6 +72,12 @@ const nftSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+
+    // Whether this NFT is currently listed for sale on the marketplace
+    isListed: {
+      type: Boolean,
+      default: false,
+    },
   },
   {
     timestamps: true, // createdAt, updatedAt
