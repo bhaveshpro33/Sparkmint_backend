@@ -7,7 +7,6 @@ const {
   verifySignature,
   subscribeForUser,
   unsubscribeForUser,
-  getCreatorPrice,
   checkSubscription,
   getSubscriptionTimeLeft,
 } = require("../services/relayerService");
@@ -43,12 +42,8 @@ const subscribe = asyncHandler(async (req, res) => {
     throw new Error("Invalid signature. Request rejected.");
   }
 
-  // Check the creator is registered on-chain
-  const priceWei = await getCreatorPrice(creator);
-  if (priceWei === "0") {
-    res.status(404);
-    throw new Error("Creator not registered for subscriptions on-chain");
-  }
+  // Fixed price: 0.1 ETH — no registration required, anyone can be subscribed to
+  const priceWei = ethers.parseEther("0.1").toString();
 
   // Relay subscribe tx on-chain (relayer pays gas; sends ETH for subscription)
   const { txHash, expiresAt } = await subscribeForUser({ creatorWallet: creator, priceWei });
@@ -219,7 +214,6 @@ const registerCreator = asyncHandler(async (req, res) => {
     throw new Error("Invalid signature. Request rejected.");
   }
 
-  const { registerCreatorForUser } = require("../services/relayerService");
   const { txHash } = await registerCreatorForUser({ monthlyPriceWei: priceWei });
 
   // Mark as creator in MongoDB
