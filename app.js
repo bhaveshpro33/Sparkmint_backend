@@ -21,8 +21,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// Serve uploaded images (NFTs and avatars) as static files
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
 
 // ─────────────────────────────────────────────
 //  Health Check

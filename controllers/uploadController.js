@@ -1,77 +1,72 @@
 const asyncHandler = require("express-async-handler");
-const path = require("path");
-const fs = require("fs");
+const cloudinary = require("../config/cloudinary");
 
 /**
- * @desc    Upload an NFT image to the server
+ * @desc    Upload an NFT image to Cloudinary
  * @route   POST /api/upload
  * @access  Public
  *
- * Accepts a multipart/form-data request with a single file field named "image".
- * Returns the public URL that should be saved as imageUrl when creating the NFT.
+ * Accepts multipart/form-data with field name "image".
+ * multer-storage-cloudinary streams the file directly to Cloudinary —
+ * nothing is written to disk, so images survive redeploys.
  *
  * Example response:
  * {
  *   "success": true,
  *   "message": "Image uploaded successfully",
  *   "data": {
- *     "imageUrl": "https://your-server.com/uploads/1712345678-123456.jpg",
- *     "filename": "1712345678-123456.jpg"
+ *     "imageUrl": "https://res.cloudinary.com/.../sparkmint/nfts/abc123.jpg",
+ *     "publicId": "sparkmint/nfts/abc123"
  *   }
  * }
  */
 const uploadImage = asyncHandler(async (req, res) => {
-  // multer puts file info on req.file after the uploadMiddleware runs
   if (!req.file) {
     res.status(400);
     throw new Error("No image file provided. Send a multipart/form-data request with field name 'image'.");
   }
 
-  // Build the public URL for this uploaded file.
-  // BASE_URL must be set in .env (e.g. https://your-render-app.onrender.com)
-  // Falls back to localhost for local development.
-  const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 5000}`;
-  const imageUrl = `${baseUrl}/uploads/${req.file.filename}`;
-
+  // multer-storage-cloudinary sets req.file.path = secure Cloudinary URL
+  // and req.file.filename = Cloudinary public_id
   res.status(201).json({
     success: true,
     message: "Image uploaded successfully",
     data: {
-      imageUrl,
-      filename: req.file.filename,
+      imageUrl: req.file.path,
+      publicId: req.file.filename,
     },
   });
 });
 
 /**
- * @desc    Delete an uploaded image file from the server
- * @route   DELETE /api/upload/:filename
+ * @desc    Delete an uploaded NFT image from Cloudinary
+ * @route   DELETE /api/upload/:publicId
  * @access  Public
  *
- * Useful when a mint fails after upload — lets the app clean up orphaned files.
+ * :publicId is the Cloudinary public_id (URL-encoded if it contains slashes).
+ * Useful when a mint fails after upload — cleans up orphaned images.
  */
 const deleteImage = asyncHandler(async (req, res) => {
-  const { filename } = req.params;
+  // publicId may contain slashes (e.g. "sparkmint/nfts/abc123")
+  // Express wildcard or encoded param — decode it
+  const publicId = decodeURIComponent(req.params.publicId);
 
-  // Basic security: reject any path traversal attempts
-  if (filename.includes("..") || filename.includes("/") || filename.includes("\\")) {
+  if (!publicId || publicId.includes("..")) {
     res.status(400);
-    throw new Error("Invalid filename.");
+    throw new Error("Invalid publicId.");
   }
 
-  const filePath = path.join(__dirname, "..", "uploads", filename);
+  const result = await cloudinary.uploader.destroy(publicId);
 
-  if (!fs.existsSync(filePath)) {
-    res.status(404);
-    throw new Error(`File not found: ${filename}`);
+  if (result.result !== "ok" && result.result !== "not found") {
+    res.status(500);
+    throw new Error(`Cloudinary deletion failed: ${result.result}`);
   }
-
-  fs.unlinkSync(filePath);
 
   res.status(200).json({
     success: true,
     message: "Image deleted successfully",
-    data: { filename },
+    data: { publicId },
   });
 });
 

@@ -1,31 +1,22 @@
 const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
+const { CloudinaryStorage } = require("multer-storage-cloudinary");
+const cloudinary = require("../config/cloudinary");
 
 // ─────────────────────────────────────────────
-//  Ensure avatars subdirectory exists at startup
+//  Storage: stream avatar directly to Cloudinary
+//  Folder: sparkmint/avatars
+//  public_id: wallet address so each user has one
+//  canonical avatar that overwrites on re-upload
 // ─────────────────────────────────────────────
-const AVATAR_DIR = path.join(__dirname, "..", "uploads", "avatars");
-if (!fs.existsSync(AVATAR_DIR)) {
-  fs.mkdirSync(AVATAR_DIR, { recursive: true });
-}
-
-// ─────────────────────────────────────────────
-//  Storage: save avatar to /uploads/avatars/
-//  Format: <walletAddress>-<timestamp>.<ext>
-//  Using wallet address in the filename makes it
-//  easy to identify whose avatar this is on disk.
-// ─────────────────────────────────────────────
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, AVATAR_DIR);
-  },
-  filename: (req, file, cb) => {
-    const wallet = (req.params.walletAddress || "unknown").toLowerCase();
-    const timestamp = Date.now();
-    const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, `${wallet}-${timestamp}${ext}`);
-  },
+const storage = new CloudinaryStorage({
+  cloudinary,
+  params: (req, _file) => ({
+    folder: "sparkmint/avatars",
+    public_id: (req.params.walletAddress || "unknown").toLowerCase(),
+    allowed_formats: ["jpg", "jpeg", "png", "gif", "webp"],
+    overwrite: true,
+    transformation: [{ width: 400, height: 400, crop: "fill", quality: "auto" }],
+  }),
 });
 
 // ─────────────────────────────────────────────

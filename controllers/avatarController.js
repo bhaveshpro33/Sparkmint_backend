@@ -1,26 +1,17 @@
 const asyncHandler = require("express-async-handler");
-const path = require("path");
-const fs = require("fs");
+const cloudinary = require("../config/cloudinary");
 const User = require("../models/User");
 const { normalizeWallet, successResponse } = require("../utils/helpers");
 
 /**
- * @desc    Upload a user avatar image
+ * @desc    Upload a user avatar image to Cloudinary
  * @route   POST /api/avatar/:walletAddress
  * @access  Public
  *
  * Accepts multipart/form-data with field name "avatar".
- * Saves the file to /uploads/avatars/ and updates the user's avatar field.
- *
- * Example response:
- * {
- *   "success": true,
- *   "message": "Avatar uploaded successfully",
- *   "data": {
- *     "avatarUrl": "https://your-server.com/uploads/avatars/0xabc...-1712345678.jpg",
- *     "user": { ...updatedUser }
- *   }
- * }
+ * The avatar middleware uses the wallet address as the Cloudinary public_id,
+ * so re-uploading overwrites the previous avatar automatically (no orphaned files).
+ * Images survive redeploys because they are stored in Cloudinary, not on disk.
  */
 const uploadAvatar = asyncHandler(async (req, res) => {
   if (!req.file) {
@@ -36,20 +27,9 @@ const uploadAvatar = asyncHandler(async (req, res) => {
     throw new Error(`No user found with wallet address: ${wallet}`);
   }
 
-  // Delete old avatar file if it's a local file (not an external URL)
-  if (user.avatar && user.avatar.includes("/uploads/avatars/")) {
-    const oldFilename = path.basename(user.avatar);
-    const oldPath = path.join(__dirname, "..", "uploads", "avatars", oldFilename);
-    if (fs.existsSync(oldPath)) {
-      fs.unlinkSync(oldPath);
-    }
-  }
+  // req.file.path = Cloudinary secure URL (set by multer-storage-cloudinary)
+  const avatarUrl = req.file.path;
 
-  // Build the public URL
-  const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 5000}`;
-  const avatarUrl = `${baseUrl}/uploads/avatars/${req.file.filename}`;
-
-  // Update user record
   const updatedUser = await User.findOneAndUpdate(
     { walletAddress: wallet },
     { $set: { avatar: avatarUrl } },
@@ -59,14 +39,14 @@ const uploadAvatar = asyncHandler(async (req, res) => {
   res.status(200).json(
     successResponse("Avatar uploaded successfully", {
       avatarUrl,
-      filename: req.file.filename,
+      publicId: req.file.filename,
       user: updatedUser,
     })
   );
 });
 
 /**
- * @desc    Delete a user's avatar
+ * @desc    Delete a user's avatar from Cloudinary
  * @route   DELETE /api/avatar/:walletAddress
  * @access  Public
  */
@@ -84,14 +64,9 @@ const deleteAvatar = asyncHandler(async (req, res) => {
     throw new Error("User has no avatar to delete");
   }
 
-  // Delete local file if stored locally
-  if (user.avatar.includes("/uploads/avatars/")) {
-    const filename = path.basename(user.avatar);
-    const filePath = path.join(__dirname, "..", "uploads", "avatars", filename);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
-  }
+  // Delete from Cloudinary using the deterministic public_id (wallet address)
+  const publicId = `sparkmint/avatars/${wallet}`;
+  await cloudinary.uploader.destroy(publicId);
 
   const updatedUser = await User.findOneAndUpdate(
     { walletAddress: wallet },

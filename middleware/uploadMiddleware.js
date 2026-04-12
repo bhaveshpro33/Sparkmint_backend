@@ -1,27 +1,18 @@
 const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
+const { CloudinaryStorage } = require("multer-storage-cloudinary");
+const cloudinary = require("../config/cloudinary");
 
 // ─────────────────────────────────────────────
-//  Ensure uploads directory exists at startup
+//  Storage: stream file directly to Cloudinary
+//  Folder: sparkmint/nfts
+//  Files persist across redeploys (stored in Cloudinary, not on disk)
 // ─────────────────────────────────────────────
-const UPLOAD_DIR = path.join(__dirname, "..", "uploads");
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-}
-
-// ─────────────────────────────────────────────
-//  Storage: save file to /uploads with a unique name
-//  Format: <timestamp>-<original-filename>
-// ─────────────────────────────────────────────
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, UPLOAD_DIR);
-  },
-  filename: (_req, file, cb) => {
-    const unique = `${Date.now()}-${Math.round(Math.random() * 1e6)}`;
-    const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, `${unique}${ext}`);
+const storage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: "sparkmint/nfts",
+    allowed_formats: ["jpg", "jpeg", "png", "gif", "webp"],
+    transformation: [{ quality: "auto", fetch_format: "auto" }],
   },
 });
 

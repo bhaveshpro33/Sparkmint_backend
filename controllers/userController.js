@@ -55,18 +55,28 @@ const upsertUser = asyncHandler(async (req, res) => {
 });
 
 /**
- * @desc    Get a single user by wallet address
+ * @desc    Get a single user by wallet address OR MongoDB _id
  * @route   GET /api/users/:walletAddress
  * @access  Public
+ *
+ * The param may be a wallet address (0x...) or a MongoDB ObjectId (24-char hex).
+ * This handles both so that callers who only have the DB id (e.g. from a
+ * creator card URL) can still resolve the full user profile including walletAddress.
  */
 const getUserByWallet = asyncHandler(async (req, res) => {
-  const wallet = normalizeWallet(req.params.walletAddress);
+  const param = req.params.walletAddress;
 
-  const user = await User.findOne({ walletAddress: wallet });
+  // Try wallet address first
+  let user = await User.findOne({ walletAddress: normalizeWallet(param) });
+
+  // Fall back to _id lookup if param looks like a MongoDB ObjectId (24 hex chars)
+  if (!user && /^[a-f\d]{24}$/i.test(param)) {
+    user = await User.findById(param);
+  }
 
   if (!user) {
     res.status(404);
-    throw new Error(`No user found with wallet address: ${wallet}`);
+    throw new Error(`No user found with wallet or id: ${param}`);
   }
 
   res.status(200).json(successResponse("User fetched successfully", user));
