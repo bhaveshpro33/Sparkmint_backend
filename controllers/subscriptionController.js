@@ -223,7 +223,10 @@ const registerCreator = asyncHandler(async (req, res) => {
     throw new Error("Invalid signature. Request rejected.");
   }
 
-  const { txHash } = await registerCreatorForUser({ monthlyPriceWei: priceWei });
+  const { txHash } = await registerCreatorForUser({
+  creatorWallet: wallet,        // ← add this
+  monthlyPriceWei: priceWei,
+});
 
   // Mark as creator in MongoDB and save subscription price
   await User.findOneAndUpdate(

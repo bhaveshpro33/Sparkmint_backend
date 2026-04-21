@@ -83,8 +83,8 @@ const mintNFTForUser = async ({ tokenURI, title, description, accessType }) => {
 // ─────────────────────────────────────────────
 //  Register creator on-chain (sets monthly price)
 // ─────────────────────────────────────────────
-const registerCreatorForUser = async ({ monthlyPriceWei }) => {
-  const tx = await creatorSubscription.registerCreator(monthlyPriceWei);
+const registerCreatorForUser = async ({ creatorWallet, monthlyPriceWei }) => {
+  const tx = await creatorSubscription.registerCreator(creatorWallet, monthlyPriceWei);
   const receipt = await tx.wait();
   return { txHash: receipt.hash };
 };
