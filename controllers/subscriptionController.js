@@ -7,15 +7,10 @@ const {
   verifySignature,
   subscribeForUser,
   unsubscribeForUser,
+  registerCreatorForUser,
   checkSubscription,
   getSubscriptionTimeLeft,
 } = require("../services/relayerService");
-
-const priceWei = await getCreatorPrice(creator);
-if (priceWei === "0") {
-  res.status(404);
-  throw new Error("Creator not registered for subscriptions on-chain");
-}
 
 // ─────────────────────────────────────────────
 //  Helper: build the exact message Flutter signs
@@ -41,7 +36,11 @@ const subscribe = asyncHandler(async (req, res) => {
   const creator = normalizeWallet(creatorWallet);
 
   // Verify the user actually signed this request
-  const message = buildSubscribeMessage({ subscriberWallet: subscriber, creatorWallet: creator, action: "Subscribe" });
+  const message = buildSubscribeMessage({
+    subscriberWallet: subscriber,
+    creatorWallet: creator,
+    action: "Subscribe",
+  });
   const isValid = verifySignature(message, signature, subscriber);
   if (!isValid) {
     res.status(401);
@@ -101,7 +100,11 @@ const unsubscribe = asyncHandler(async (req, res) => {
   const subscriber = normalizeWallet(subscriberWallet);
   const creator = normalizeWallet(creatorWallet);
 
-  const message = buildSubscribeMessage({ subscriberWallet: subscriber, creatorWallet: creator, action: "Unsubscribe" });
+  const message = buildSubscribeMessage({
+    subscriberWallet: subscriber,
+    creatorWallet: creator,
+    action: "Unsubscribe",
+  });
   const isValid = verifySignature(message, signature, subscriber);
   if (!isValid) {
     res.status(401);
@@ -222,12 +225,12 @@ const registerCreator = asyncHandler(async (req, res) => {
 
   const { txHash } = await registerCreatorForUser({ monthlyPriceWei: priceWei });
 
-  // Mark as creator in MongoDB
+  // Mark as creator in MongoDB and save subscription price
   await User.findOneAndUpdate(
-  { walletAddress: wallet },
-  { $set: { isCreator: true, subscriptionPriceEth: parseFloat(monthlyPriceEth) } },
-  { upsert: false }
-); 
+    { walletAddress: wallet },
+    { $set: { isCreator: true, subscriptionPriceEth: parseFloat(monthlyPriceEth) } },
+    { upsert: false }
+  );
 
   res.status(200).json(
     successResponse("Creator registered on-chain", {
