@@ -12,9 +12,18 @@ const { normalizeWallet, successResponse } = require("../utils/helpers");
  * we update it. One endpoint handles both cleanly.
  */
 const upsertUser = asyncHandler(async (req, res) => {
-  const { walletAddress, name, email, bio, avatar, isCreator } = req.body;
+  const {
+    walletAddress,
+    name,
+    email,
+    bio,
+    avatar,
+    isCreator,
+    subscriptionPriceEth,
+  } = req.body;
 
-  // walletAddress is required
+  console.log("incoming subscriptionPriceEth:", req.body.subscriptionPriceEth);
+console.log("type:", typeof req.body.subscriptionPriceEth);
   if (!walletAddress) {
     res.status(400);
     throw new Error("walletAddress is required");
@@ -22,29 +31,28 @@ const upsertUser = asyncHandler(async (req, res) => {
 
   const wallet = normalizeWallet(walletAddress);
 
-  // Build the fields to set (only include defined values)
   const updateFields = {};
   if (name !== undefined) updateFields.name = name;
   if (email !== undefined) updateFields.email = email;
   if (bio !== undefined) updateFields.bio = bio;
   if (avatar !== undefined) updateFields.avatar = avatar;
   if (isCreator !== undefined) updateFields.isCreator = isCreator;
+  if (subscriptionPriceEth !== undefined) {
+    updateFields.subscriptionPriceEth = parseFloat(subscriptionPriceEth);
+  }
 
-  // findOneAndUpdate with upsert:true → create if not found, update if found
   const user = await User.findOneAndUpdate(
-    { walletAddress: wallet }, // filter
-    { $set: updateFields },     // update
+    { walletAddress: wallet },
+    { $set: updateFields },
     {
-      new: true,      // return the updated document
-      upsert: true,   // create if not found
+      new: true,
+      upsert: true,
       runValidators: true,
       setDefaultsOnInsert: true,
     }
   );
 
-  // Determine if this was a create or an update by checking timestamps
-  const isNew =
-    user.createdAt.getTime() === user.updatedAt.getTime();
+  const isNew = user.createdAt.getTime() === user.updatedAt.getTime();
 
   res.status(isNew ? 201 : 200).json(
     successResponse(
@@ -53,7 +61,6 @@ const upsertUser = asyncHandler(async (req, res) => {
     )
   );
 });
-
 /**
  * @desc    Get a single user by wallet address OR MongoDB _id
  * @route   GET /api/users/:walletAddress
