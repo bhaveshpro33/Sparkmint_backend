@@ -31,13 +31,9 @@ const userSchema = new mongoose.Schema(
       required: [true, "Wallet address is required"],
       unique: true,
       trim: true,
-      lowercase: true, // always store as lowercase
+      lowercase: true,
     },
-// Add this field inside userSchema
-subscriptionPriceEth: {
-  type: Number,
-  default: 0,
-},
+
     // Short bio shown on the creator profile page
     bio: {
       type: String,
@@ -56,6 +52,12 @@ subscriptionPriceEth: {
     isCreator: {
       type: Boolean,
       default: false,
+    },
+
+    // Monthly subscription price in ETH set during creator registration
+    subscriptionPriceEth: {
+      type: Number,
+      default: 0,
     },
   },
   {
