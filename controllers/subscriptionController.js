@@ -11,6 +11,12 @@ const {
   getSubscriptionTimeLeft,
 } = require("../services/relayerService");
 
+const priceWei = await getCreatorPrice(creator);
+if (priceWei === "0") {
+  res.status(404);
+  throw new Error("Creator not registered for subscriptions on-chain");
+}
+
 // ─────────────────────────────────────────────
 //  Helper: build the exact message Flutter signs
 // ─────────────────────────────────────────────
@@ -218,10 +224,10 @@ const registerCreator = asyncHandler(async (req, res) => {
 
   // Mark as creator in MongoDB
   await User.findOneAndUpdate(
-    { walletAddress: wallet },
-    { $set: { isCreator: true } },
-    { upsert: false }
-  );
+  { walletAddress: wallet },
+  { $set: { isCreator: true, subscriptionPriceEth: parseFloat(monthlyPriceEth) } },
+  { upsert: false }
+); 
 
   res.status(200).json(
     successResponse("Creator registered on-chain", {

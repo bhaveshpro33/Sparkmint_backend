@@ -33,7 +33,11 @@ const userSchema = new mongoose.Schema(
       trim: true,
       lowercase: true, // always store as lowercase
     },
-
+// Add this field inside userSchema
+subscriptionPriceEth: {
+  type: Number,
+  default: 0,
+},
     // Short bio shown on the creator profile page
     bio: {
       type: String,
