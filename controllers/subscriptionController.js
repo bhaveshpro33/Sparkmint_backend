@@ -5,21 +5,92 @@ const User = require("../models/User");
 const { normalizeWallet, successResponse } = require("../utils/helpers");
 const {
   verifySignature,
+  registerCreatorForUser,
   subscribeForUser,
   unsubscribeForUser,
-  registerCreatorForUser,
+  getCreatorPrice,
   checkSubscription,
   getSubscriptionTimeLeft,
 } = require("../services/relayerService");
 
 // ─────────────────────────────────────────────
-//  Helper: build the exact message Flutter signs
+// Helpers: messages must match Flutter exactly
 // ─────────────────────────────────────────────
 const buildSubscribeMessage = ({ subscriberWallet, creatorWallet, action }) =>
   `SparkMint Subscription ${action}\nSubscriber: ${subscriberWallet}\nCreator: ${creatorWallet}`;
 
+const buildRegisterCreatorMessage = ({ walletAddress, monthlyPriceEth }) =>
+  `SparkMint Register Creator\nWallet: ${walletAddress}\nMonthlyPrice: ${monthlyPriceEth} ETH`;
+
 /**
- * @desc    Subscribe to a creator (monthly) — relayed on-chain
+ * @desc    Register as creator via backend relayer
+ * @route   POST /api/subscriptions/register
+ * @body    { walletAddress, monthlyPriceEth, signature }
+ * @access  Public
+ */
+const registerCreator = asyncHandler(async (req, res) => {
+  const { walletAddress, monthlyPriceEth, signature } = req.body;
+
+  if (!walletAddress || !monthlyPriceEth || !signature) {
+    res.status(400);
+    throw new Error("walletAddress, monthlyPriceEth and signature are required");
+  }
+
+  const wallet = normalizeWallet(walletAddress);
+  const priceEth = Number(monthlyPriceEth);
+
+  if (!Number.isFinite(priceEth) || priceEth <= 0) {
+    res.status(400);
+    throw new Error("monthlyPriceEth must be a valid number greater than 0");
+  }
+
+  const message = buildRegisterCreatorMessage({
+    walletAddress: wallet,
+    monthlyPriceEth,
+  });
+
+  const isValid = verifySignature(message, signature, wallet);
+  if (!isValid) {
+    res.status(401);
+    throw new Error("Invalid signature. Request rejected.");
+  }
+
+  const monthlyPriceWei = ethers.parseEther(String(monthlyPriceEth)).toString();
+
+  const { txHash, blockNumber } = await registerCreatorForUser({
+    creatorWallet: wallet,
+    monthlyPriceWei,
+  });
+
+  const user = await User.findOneAndUpdate(
+    { walletAddress: wallet },
+    {
+      $set: {
+        isCreator: true,
+        subscriptionPriceEth: parseFloat(monthlyPriceEth),
+      },
+    },
+    {
+      new: true,
+      upsert: true,
+      runValidators: true,
+      setDefaultsOnInsert: true,
+    }
+  );
+
+  res.status(200).json(
+    successResponse("Creator registered successfully", {
+      user,
+      txHash,
+      blockNumber,
+      monthlyPriceEth,
+      monthlyPriceWei,
+    })
+  );
+});
+
+/**
+ * @desc    Subscribe to a creator via backend relayer
  * @route   POST /api/subscriptions/subscribe
  * @body    { subscriberWallet, creatorWallet, signature }
  * @access  Public
@@ -35,31 +106,41 @@ const subscribe = asyncHandler(async (req, res) => {
   const subscriber = normalizeWallet(subscriberWallet);
   const creator = normalizeWallet(creatorWallet);
 
-  // Verify the user actually signed this request
+  if (subscriber === creator) {
+    res.status(400);
+    throw new Error("A user cannot subscribe to themselves");
+  }
+
   const message = buildSubscribeMessage({
     subscriberWallet: subscriber,
     creatorWallet: creator,
     action: "Subscribe",
   });
+
   const isValid = verifySignature(message, signature, subscriber);
   if (!isValid) {
     res.status(401);
     throw new Error("Invalid signature. Request rejected.");
   }
 
-  // Fixed price: 0.1 ETH — no registration required, anyone can be subscribed to
-  const priceWei = ethers.parseEther("0.1").toString();
+  const priceWei = await getCreatorPrice(creator);
+  if (!priceWei || priceWei === "0") {
+    res.status(404);
+    throw new Error("Creator not registered or subscription price unavailable");
+  }
 
-  // Relay subscribe tx on-chain (relayer pays gas; sends ETH for subscription)
-  const { txHash, expiresAt } = await subscribeForUser({ creatorWallet: creator, priceWei });
+  const { txHash, expiresAt, blockNumber } = await subscribeForUser({
+    subscriberWallet: subscriber,
+    creatorWallet: creator,
+    priceWei,
+  });
 
-  // Update or create the subscription record in MongoDB
   const sub = await Subscription.findOneAndUpdate(
     { subscriberWallet: subscriber, creatorWallet: creator },
     {
       $set: {
         isActive: true,
-        expiresAt: new Date(expiresAt * 1000), // convert Unix timestamp → Date
+        expiresAt: expiresAt ? new Date(Number(expiresAt) * 1000) : null,
         txHash,
         priceWei,
       },
@@ -67,7 +148,6 @@ const subscribe = asyncHandler(async (req, res) => {
     { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
   );
 
-  // Mark user as creator in our DB if not already
   await User.findOneAndUpdate(
     { walletAddress: creator },
     { $set: { isCreator: true } },
@@ -78,13 +158,15 @@ const subscribe = asyncHandler(async (req, res) => {
     successResponse("Subscribed successfully", {
       subscription: sub,
       txHash,
-      expiresAt: new Date(expiresAt * 1000),
+      blockNumber,
+      expiresAt: expiresAt ? new Date(Number(expiresAt) * 1000) : null,
+      priceWei,
     })
   );
 });
 
 /**
- * @desc    Unsubscribe from a creator — relayed on-chain
+ * @desc    Unsubscribe from a creator via backend relayer
  * @route   POST /api/subscriptions/unsubscribe
  * @body    { subscriberWallet, creatorWallet, signature }
  * @access  Public
@@ -105,23 +187,66 @@ const unsubscribe = asyncHandler(async (req, res) => {
     creatorWallet: creator,
     action: "Unsubscribe",
   });
+
   const isValid = verifySignature(message, signature, subscriber);
   if (!isValid) {
     res.status(401);
     throw new Error("Invalid signature. Request rejected.");
   }
 
-  // Relay unsubscribe tx on-chain
-  const { txHash } = await unsubscribeForUser({ creatorWallet: creator });
+  const { txHash, blockNumber } = await unsubscribeForUser({
+    subscriberWallet: subscriber,
+    creatorWallet: creator,
+  });
 
-  // Update MongoDB record
   await Subscription.findOneAndUpdate(
     { subscriberWallet: subscriber, creatorWallet: creator },
-    { $set: { isActive: false, txHash } }
+    { $set: { isActive: false, txHash } },
+    { new: true }
   );
 
   res.status(200).json(
-    successResponse("Unsubscribed successfully", { txHash })
+    successResponse("Unsubscribed successfully", {
+      txHash,
+      blockNumber,
+    })
+  );
+});
+
+/**
+ * @desc    Check if a wallet is subscribed to a creator (reads live from chain)
+ * @route   GET /api/subscriptions/check?subscriber=0x...&creator=0x...
+ * @access  Public
+ */
+const checkSubscriptionStatus = asyncHandler(async (req, res) => {
+  const { subscriber, creator } = req.query;
+
+  if (!subscriber || !creator) {
+    res.status(400);
+    throw new Error("subscriber and creator query params are required");
+  }
+
+  const sub = normalizeWallet(subscriber);
+  const cre = normalizeWallet(creator);
+
+  const isSubscribed = await checkSubscription({
+    subscriberWallet: sub,
+    creatorWallet: cre,
+  });
+
+  const timeLeftSeconds = isSubscribed
+    ? await getSubscriptionTimeLeft({
+        subscriberWallet: sub,
+        creatorWallet: cre,
+      })
+    : 0;
+
+  res.status(200).json(
+    successResponse("Subscription status checked", {
+      isSubscribed,
+      timeLeftSeconds: Number(timeLeftSeconds),
+      timeLeftDays: Math.floor(Number(timeLeftSeconds) / 86400),
+    })
   );
 });
 
@@ -138,12 +263,14 @@ const getSubscriberSubscriptions = asyncHandler(async (req, res) => {
     isActive: true,
   }).sort({ createdAt: -1 });
 
-  // Hydrate creator profiles
   const creatorWallets = subs.map((s) => s.creatorWallet);
   const creators = await User.find({ walletAddress: { $in: creatorWallets } });
 
   res.status(200).json(
-    successResponse(`${subs.length} active subscription(s)`, { subscriptions: subs, creators })
+    successResponse(`${subs.length} active subscription(s)`, {
+      subscriptions: subs,
+      creators,
+    })
   );
 });
 
@@ -164,83 +291,9 @@ const getCreatorSubscribers = asyncHandler(async (req, res) => {
   const users = await User.find({ walletAddress: { $in: subscriberWallets } });
 
   res.status(200).json(
-    successResponse(`${subs.length} subscriber(s)`, { subscriptions: subs, subscribers: users })
-  );
-});
-
-/**
- * @desc    Check if a wallet is subscribed to a creator (reads on-chain)
- * @route   GET /api/subscriptions/check?subscriber=0x...&creator=0x...
- * @access  Public
- */
-const checkSubscriptionStatus = asyncHandler(async (req, res) => {
-  const { subscriber, creator } = req.query;
-
-  if (!subscriber || !creator) {
-    res.status(400);
-    throw new Error("subscriber and creator query params are required");
-  }
-
-  const sub = normalizeWallet(subscriber);
-  const cre = normalizeWallet(creator);
-
-  // Read live from blockchain
-  const isSubscribed = await checkSubscription({ subscriberWallet: sub, creatorWallet: cre });
-  const timeLeftSeconds = isSubscribed
-    ? await getSubscriptionTimeLeft({ subscriberWallet: sub, creatorWallet: cre })
-    : 0;
-
-  res.status(200).json(
-    successResponse("Subscription status checked", {
-      isSubscribed,
-      timeLeftSeconds: Number(timeLeftSeconds),
-      timeLeftDays: Math.floor(Number(timeLeftSeconds) / 86400),
-    })
-  );
-});
-
-/**
- * @desc    Register as a creator with monthly subscription price
- * @route   POST /api/subscriptions/register
- * @body    { walletAddress, monthlyPriceEth, signature }
- * @access  Public
- */
-const registerCreator = asyncHandler(async (req, res) => {
-  const { walletAddress, monthlyPriceEth, signature } = req.body;
-
-  if (!walletAddress || !monthlyPriceEth || !signature) {
-    res.status(400);
-    throw new Error("walletAddress, monthlyPriceEth and signature are required");
-  }
-
-  const wallet = normalizeWallet(walletAddress);
-  const priceWei = ethers.parseEther(String(monthlyPriceEth)).toString();
-
-  const message = `SparkMint Register Creator\nWallet: ${wallet}\nMonthlyPrice: ${monthlyPriceEth} ETH`;
-  const isValid = verifySignature(message, signature, wallet);
-  if (!isValid) {
-    res.status(401);
-    throw new Error("Invalid signature. Request rejected.");
-  }
-
-  const { txHash } = await registerCreatorForUser({
-  creatorWallet: wallet,        // ← add this
-  monthlyPriceWei: priceWei,
-});
-
-  // Mark as creator in MongoDB and save subscription price
-  await User.findOneAndUpdate(
-    { walletAddress: wallet },
-    { $set: { isCreator: true, subscriptionPriceEth: parseFloat(monthlyPriceEth) } },
-    { upsert: false }
-  );
-
-  res.status(200).json(
-    successResponse("Creator registered on-chain", {
-      walletAddress: wallet,
-      monthlyPriceEth,
-      priceWei,
-      txHash,
+    successResponse(`${subs.length} subscriber(s)`, {
+      subscriptions: subs,
+      subscribers: users,
     })
   );
 });

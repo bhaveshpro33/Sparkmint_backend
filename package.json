@@ -1,6 +1,6 @@
 {
   "name": "sparkmint-backend",
-  "version": "4.0.1",
+  "version": "5.0.0",
   "description": "SparkMint NFT Platform – Off-chain backend API",
   "main": "server.js",
   "scripts": {
