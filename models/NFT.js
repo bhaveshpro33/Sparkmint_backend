@@ -3,33 +3,33 @@ const mongoose = require("mongoose");
 /**
  * NFT Schema
  *
- * Stores OFF-CHAIN metadata for NFTs minted on the SparkMint platform.
- * This does NOT handle blockchain ownership – that lives in smart contracts.
- * This model is purely for app display, search, and profile data.
+ * OFF-CHAIN metadata for SparkMint NFTs.
+ * Blockchain ownership/access lives in smart contracts.
+ * This model is used for app display, search, profile data, and marketplace listing info.
  */
 const nftSchema = new mongoose.Schema(
   {
-    // Human-readable title of the NFT
+    // Human-readable title
     title: {
       type: String,
       required: [true, "NFT title is required"],
       trim: true,
     },
 
-    // Optional description of the NFT artwork or content
+    // Optional description
     description: {
       type: String,
       trim: true,
       default: "",
     },
 
-    // URL pointing to the NFT image (IPFS hash, CDN URL, etc.)
+    // NFT image URL
     imageUrl: {
       type: String,
       required: [true, "Image URL is required"],
     },
 
-    // Wallet address of the original creator – normalized to lowercase
+    // Original creator wallet
     creatorWallet: {
       type: String,
       required: [true, "Creator wallet address is required"],
@@ -37,8 +37,7 @@ const nftSchema = new mongoose.Schema(
       trim: true,
     },
 
-    // Wallet address of the current owner – normalized to lowercase
-    // Initially same as creatorWallet; updated when NFT is transferred
+    // Current owner wallet
     ownerWallet: {
       type: String,
       required: [true, "Owner wallet address is required"],
@@ -46,20 +45,28 @@ const nftSchema = new mongoose.Schema(
       trim: true,
     },
 
-    // Token ID from the blockchain (string to support large uint256 values)
+    // On-chain token ID
     tokenId: {
       type: String,
       default: null,
     },
 
-    // Listing price in the platform's currency (e.g. ETH, MATIC)
+    // 0 = FREE, 1 = SUBSCRIBER_ONLY
+    accessType: {
+      type: Number,
+      enum: [0, 1],
+      default: 0,
+    },
+
+    // Marketplace/listing price only
+    // This is NOT used for FREE/VIP access logic
     price: {
       type: Number,
       default: 0,
       min: [0, "Price cannot be negative"],
     },
 
-    // Category tag for filtering (art, music, gaming, photography, etc.)
+    // Category tag
     category: {
       type: String,
       trim: true,
@@ -67,26 +74,28 @@ const nftSchema = new mongoose.Schema(
       default: "art",
     },
 
-    // Transaction hash from the mint transaction on the blockchain
+    // Mint tx hash
     txHash: {
       type: String,
       default: null,
     },
 
-    // Whether this NFT is currently listed for sale on the marketplace
+    // Listed on marketplace?
     isListed: {
       type: Boolean,
       default: false,
     },
   },
   {
-    timestamps: true, // createdAt, updatedAt
+    timestamps: true,
   }
 );
 
-// Index commonly queried fields for faster lookups
+// Common query indexes
 nftSchema.index({ ownerWallet: 1 });
 nftSchema.index({ creatorWallet: 1 });
 nftSchema.index({ category: 1 });
+nftSchema.index({ accessType: 1 });
+nftSchema.index({ isListed: 1 });
 
 module.exports = mongoose.model("NFT", nftSchema);

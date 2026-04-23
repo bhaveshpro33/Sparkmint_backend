@@ -6,9 +6,6 @@ const { normalizeWallet, successResponse } = require("../utils/helpers");
  * @desc    Create a new NFT metadata record
  * @route   POST /api/nfts
  * @access  Public
- *
- * Called after a mint transaction is confirmed on-chain.
- * The Flutter app sends the metadata + txHash to persist it here.
  */
 const createNFT = asyncHandler(async (req, res) => {
   const {
@@ -18,39 +15,48 @@ const createNFT = asyncHandler(async (req, res) => {
     creatorWallet,
     ownerWallet,
     tokenId,
+    accessType,
     price,
     category,
     txHash,
+    isListed,
   } = req.body;
 
-  // Validate required fields
   if (!title || !imageUrl || !creatorWallet) {
     res.status(400);
     throw new Error("title, imageUrl, and creatorWallet are required");
   }
 
+  const normalizedAccessType =
+    accessType === 1 || accessType === "1" ? 1 : 0;
+
+  const normalizedPrice =
+    price === null || price === undefined || price === ""
+      ? 0
+      : Number(price);
+
+  if (!Number.isFinite(normalizedPrice) || normalizedPrice < 0) {
+    res.status(400);
+    throw new Error("price must be a valid non-negative number");
+  }
+
   const nft = await NFT.create({
     title,
-    description,
+    description: description || "",
     imageUrl,
     creatorWallet: normalizeWallet(creatorWallet),
-    // If ownerWallet not provided, default to creator (just minted)
     ownerWallet: normalizeWallet(ownerWallet || creatorWallet),
     tokenId: tokenId || null,
-    price: price || 0,
+    accessType: normalizedAccessType,
+    price: normalizedPrice,
     category: category || "art",
     txHash: txHash || null,
+    isListed: isListed === true,
   });
 
   res.status(201).json(successResponse("NFT created successfully", nft));
 });
 
-/**
- * @desc    Get all NFTs (with optional category filter)
- * @route   GET /api/nfts
- * @route   GET /api/nfts?category=art
- * @access  Public
- */
 const getAllNFTs = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.category) filter.category = req.query.category.toLowerCase();
@@ -62,11 +68,6 @@ const getAllNFTs = asyncHandler(async (req, res) => {
   );
 });
 
-/**
- * @desc    Get a single NFT by its MongoDB _id
- * @route   GET /api/nfts/:id
- * @access  Public
- */
 const getNFTById = asyncHandler(async (req, res) => {
   const nft = await NFT.findById(req.params.id);
 
@@ -78,50 +79,24 @@ const getNFTById = asyncHandler(async (req, res) => {
   res.status(200).json(successResponse("NFT fetched successfully", nft));
 });
 
-/**
- * @desc    Get all NFTs owned by a specific wallet address
- * @route   GET /api/nfts/owner/:walletAddress
- * @access  Public
- */
 const getNFTsByOwner = asyncHandler(async (req, res) => {
   const wallet = normalizeWallet(req.params.walletAddress);
   const nfts = await NFT.find({ ownerWallet: wallet }).sort({ createdAt: -1 });
 
   res.status(200).json(
-    successResponse(
-      `${nfts.length} NFT(s) found for owner ${wallet}`,
-      nfts
-    )
+    successResponse(`${nfts.length} NFT(s) found for owner ${wallet}`, nfts)
   );
 });
 
-/**
- * @desc    Get all NFTs originally created by a specific wallet address
- * @route   GET /api/nfts/creator/:walletAddress
- * @access  Public
- */
 const getNFTsByCreator = asyncHandler(async (req, res) => {
   const wallet = normalizeWallet(req.params.walletAddress);
-  const nfts = await NFT.find({ creatorWallet: wallet }).sort({
-    createdAt: -1,
-  });
+  const nfts = await NFT.find({ creatorWallet: wallet }).sort({ createdAt: -1 });
 
   res.status(200).json(
-    successResponse(
-      `${nfts.length} NFT(s) found for creator ${wallet}`,
-      nfts
-    )
+    successResponse(`${nfts.length} NFT(s) found for creator ${wallet}`, nfts)
   );
 });
 
-/**
- * @desc    Update an NFT record (e.g. price change, ownership transfer)
- * @route   PUT /api/nfts/:id
- * @access  Public
- *
- * NOTE: Ownership transfer on-chain is handled by the smart contract.
- * This endpoint only updates the off-chain metadata record to stay in sync.
- */
 const updateNFT = asyncHandler(async (req, res) => {
   const nft = await NFT.findById(req.params.id);
 
@@ -130,13 +105,28 @@ const updateNFT = asyncHandler(async (req, res) => {
     throw new Error(`NFT not found with id: ${req.params.id}`);
   }
 
-  // Normalize wallet fields if they're being updated
-  if (req.body.ownerWallet)
+  if (req.body.ownerWallet) {
     req.body.ownerWallet = normalizeWallet(req.body.ownerWallet);
-  if (req.body.creatorWallet)
-    req.body.creatorWallet = normalizeWallet(req.body.creatorWallet);
+  }
 
-  // Apply updates – only fields present in req.body will be changed
+  if (req.body.creatorWallet) {
+    req.body.creatorWallet = normalizeWallet(req.body.creatorWallet);
+  }
+
+  if (req.body.accessType !== undefined) {
+    req.body.accessType =
+      req.body.accessType === 1 || req.body.accessType === "1" ? 1 : 0;
+  }
+
+  if (req.body.price !== undefined) {
+    const normalizedPrice = Number(req.body.price);
+    if (!Number.isFinite(normalizedPrice) || normalizedPrice < 0) {
+      res.status(400);
+      throw new Error("price must be a valid non-negative number");
+    }
+    req.body.price = normalizedPrice;
+  }
+
   const updatedNFT = await NFT.findByIdAndUpdate(
     req.params.id,
     { $set: req.body },
@@ -146,13 +136,6 @@ const updateNFT = asyncHandler(async (req, res) => {
   res.status(200).json(successResponse("NFT updated successfully", updatedNFT));
 });
 
-/**
- * @desc    Delete an NFT metadata record
- * @route   DELETE /api/nfts/:id
- * @access  Public
- *
- * Removes the off-chain record only. Does NOT burn the token on-chain.
- */
 const deleteNFT = asyncHandler(async (req, res) => {
   const nft = await NFT.findById(req.params.id);
 

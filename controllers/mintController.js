@@ -13,12 +13,8 @@ const {
   mintNFTForUser,
   getRelayerBalance,
 } = require("../services/relayerService");
-const { ethers } = require("ethers");
 
-// ─────────────────────────────────────────────
-//  Platform fee (in ETH)
-//  Users pay this fee to mint — you keep it
-// ─────────────────────────────────────────────
+// Platform fee (if used elsewhere)
 const PLATFORM_FEE_ETH = process.env.PLATFORM_FEE_ETH || "0.001";
 
 /**
@@ -28,29 +24,29 @@ const PLATFORM_FEE_ETH = process.env.PLATFORM_FEE_ETH || "0.001";
  *
  * Body:
  * {
- *   walletAddress: "0x...",      ← user's wallet
- *   signature: "0x...",          ← user signed the mint message
+ *   walletAddress: "0x...",
+ *   signature: "0x...",
  *   title: "My NFT",
  *   description: "...",
  *   imageUrl: "https://...",
- *   accessType: 0,               ← 0=FREE, 1=SUBSCRIBER_ONLY
+ *   accessType: 0,      // 0=FREE, 1=SUBSCRIBER_ONLY
  *   category: "art",
- *   price: 0.05,
+ *   price: 0.05         // marketplace/listing price only
  * }
  */
 const relayMint = asyncHandler(async (req, res) => {
   const {
-    walletAddress,
-    signature,
-    title,
-    description,
-    imageUrl,
-    accessType,
-    category,
-    price,
-  } = req.body;
+  walletAddress,
+  signature,
+  title,
+  description,
+  imageUrl,
+  accessType,
+  category,
+  price,
+  isListed,
+} = req.body;
 
-  // ── Validate required fields ───────────────────────────────────────────
   if (!walletAddress || !signature || !title || !imageUrl) {
     res.status(400);
     throw new Error("walletAddress, signature, title and imageUrl are required");
@@ -58,49 +54,61 @@ const relayMint = asyncHandler(async (req, res) => {
 
   const wallet = normalizeWallet(walletAddress);
 
-  // ── Build the exact message the user should have signed ───────────────
-  // This MUST match exactly what Flutter sends to the wallet for signing
+  // Normalize accessType strictly
+  const normalizedAccessType =
+    accessType === 1 || accessType === "1" ? 1 : 0;
+
+  // Marketplace/listing price only
+  const normalizedPrice =
+    price === null || price === undefined || price === ""
+      ? 0
+      : Number(price);
+
+  if (!Number.isFinite(normalizedPrice) || normalizedPrice < 0) {
+    res.status(400);
+    throw new Error("price must be a valid non-negative number");
+  }
+
+  // Must match Flutter signed message exactly
   const mintMessage = buildMintMessage({
     walletAddress: wallet,
     title,
     imageUrl,
-    accessType: accessType ?? 0,
+    accessType: normalizedAccessType,
   });
 
-  // ── Verify signature ──────────────────────────────────────────────────
   const isValid = verifySignature(mintMessage, signature, wallet);
   if (!isValid) {
     res.status(401);
     throw new Error("Invalid signature. Request rejected.");
   }
 
-  // ── Check relayer balance ─────────────────────────────────────────────
   const balance = await getRelayerBalance();
   if (parseFloat(balance) < 0.005) {
     res.status(503);
     throw new Error("Relayer wallet low on funds. Please try again later.");
   }
 
-  // ── Mint NFT on-chain via relayer ─────────────────────────────────────
   const { txHash, tokenId, blockNumber } = await mintNFTForUser({
     tokenURI: imageUrl,
     title,
     description: description || "",
-    accessType: accessType ?? 0,
+    accessType: normalizedAccessType,
   });
 
-  // ── Save metadata to MongoDB ──────────────────────────────────────────
-  const nft = await NFT.create({
-    title,
-    description: description || "",
-    imageUrl,
-    creatorWallet: wallet,
-    ownerWallet: wallet,
-    tokenId: tokenId || null,
-    price: price || 0,
-    category: category || "art",
-    txHash,
-  });
+ const nft = await NFT.create({
+  title,
+  description: description || "",
+  imageUrl,
+  creatorWallet: wallet,
+  ownerWallet: wallet,
+  tokenId: tokenId || null,
+  accessType: normalizedAccessType,
+  price: normalizedPrice,
+  category: category || "art",
+  txHash,
+  isListed: isListed === true,
+});
 
   res.status(201).json(
     successResponse("NFT minted successfully", {
@@ -108,13 +116,13 @@ const relayMint = asyncHandler(async (req, res) => {
       txHash,
       tokenId,
       blockNumber,
-      mintMessage, // return for debugging
+      mintMessage,
     })
   );
 });
 
 /**
- * @desc    Get relayer status (balance, address)
+ * @desc    Get relayer status
  * @route   GET /api/mint/status
  * @access  Public
  */
@@ -132,10 +140,6 @@ const relayerStatus = asyncHandler(async (req, res) => {
   );
 });
 
-// ─────────────────────────────────────────────
-//  Build mint message
-//  Must match exactly what Flutter signs
-// ─────────────────────────────────────────────
 const buildMintMessage = ({ walletAddress, title, imageUrl, accessType }) => {
   return `SparkMint Mint Request\nWallet: ${walletAddress}\nTitle: ${title}\nImage: ${imageUrl}\nAccessType: ${accessType}`;
 };
