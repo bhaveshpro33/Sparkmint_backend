@@ -6,7 +6,7 @@ const { normalizeWallet, successResponse } = require("../utils/helpers");
 const {
   verifySignature,
   listNFTForSale,
-  buyNFTForUser,
+
 } = require("../services/relayerService");
 
 // ─────────────────────────────────────────────
@@ -87,52 +87,69 @@ const buyNFT = asyncHandler(async (req, res) => {
 
   if (!buyerWallet || !nftId || !tokenId || !signature) {
     res.status(400);
-    throw new Error("buyerWallet, nftId, tokenId and signature are required");
+    throw new Error(
+      "buyerWallet, nftId, tokenId and signature are required"
+    );
   }
 
   const buyer = normalizeWallet(buyerWallet);
 
-  // Verify NFT exists
+  // Find NFT
   const nft = await NFT.findById(nftId);
+
   if (!nft) {
     res.status(404);
     throw new Error(`NFT not found with id: ${nftId}`);
   }
+
+  // Prevent self purchase
   if (nft.ownerWallet === buyer) {
     res.status(400);
     throw new Error("You already own this NFT");
   }
 
+  // Check listed
+  if (!nft.isListed) {
+    res.status(400);
+    throw new Error("NFT is not listed for sale");
+  }
+
   // Verify signature
-  const message = buildBuyMessage({ walletAddress: buyer, tokenId });
+  const message = buildBuyMessage({
+    walletAddress: buyer,
+    tokenId,
+  });
+
   const isValid = verifySignature(message, signature, buyer);
+
   if (!isValid) {
     res.status(401);
     throw new Error("Invalid signature. Request rejected.");
   }
 
-  const priceWei = ethers.parseEther(String(nft.price)).toString();
   const sellerWallet = nft.ownerWallet;
 
-  // Relay buyNFT on-chain (relayer sends ETH to contract, gets NFT transferred to buyer)
-  const { txHash, blockNumber } = await buyNFTForUser({ tokenId, priceWei });
-
-  // Record the transaction
+  // OFFCHAIN TRANSACTION RECORD
   const transaction = await Transaction.create({
     nftId: nft._id,
     tokenId: String(tokenId),
     sellerWallet,
     buyerWallet: buyer,
     priceEth: nft.price,
-    priceWei,
-    txHash,
-    blockNumber,
+    txHash: "OFFCHAIN",
+    blockNumber: 0,
   });
 
-  // Update NFT ownership off-chain
+  // TRANSFER OWNERSHIP IN DATABASE ONLY
   const updatedNFT = await NFT.findByIdAndUpdate(
     nftId,
-    { $set: { ownerWallet: buyer, isListed: false } },
+    {
+      $set: {
+        ownerWallet: buyer,
+        isListed: false,
+        price: 0,
+      },
+    },
     { new: true }
   );
 
@@ -140,8 +157,6 @@ const buyNFT = asyncHandler(async (req, res) => {
     successResponse("NFT purchased successfully", {
       nft: updatedNFT,
       transaction,
-      txHash,
-      blockNumber,
     })
   );
 });
