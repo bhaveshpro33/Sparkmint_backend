@@ -1,6 +1,8 @@
 const asyncHandler = require("express-async-handler");
 const NFT = require("../models/NFT");
 const { normalizeWallet, successResponse } = require("../utils/helpers");
+const { ethers } = require("ethers");
+const { listNFTForSale } = require("../services/relayerService"); 
 
 /**
  * @desc    Create a new NFT metadata record
@@ -105,31 +107,61 @@ const updateNFT = asyncHandler(async (req, res) => {
     throw new Error(`NFT not found with id: ${req.params.id}`);
   }
 
-  if (req.body.ownerWallet) {
-    req.body.ownerWallet = normalizeWallet(req.body.ownerWallet);
-  }
+  const updateFields = {};
 
-  if (req.body.creatorWallet) {
-    req.body.creatorWallet = normalizeWallet(req.body.creatorWallet);
-  }
+  if (req.body.title !== undefined) updateFields.title = req.body.title;
+  if (req.body.description !== undefined) updateFields.description = req.body.description;
 
   if (req.body.accessType !== undefined) {
-    req.body.accessType =
+    updateFields.accessType =
       req.body.accessType === 1 || req.body.accessType === "1" ? 1 : 0;
+  }
+
+  if (req.body.isListed !== undefined) {
+    updateFields.isListed = req.body.isListed === true;
   }
 
   if (req.body.price !== undefined) {
     const normalizedPrice = Number(req.body.price);
+
     if (!Number.isFinite(normalizedPrice) || normalizedPrice < 0) {
       res.status(400);
       throw new Error("price must be a valid non-negative number");
     }
-    req.body.price = normalizedPrice;
+
+    updateFields.price = normalizedPrice;
+  }
+
+  // ✅ Blockchain update when listed/price changes
+  const wantsListing = updateFields.isListed === true;
+  const hasPrice = updateFields.price !== undefined && updateFields.price > 0;
+
+  if (wantsListing && hasPrice) {
+    if (!nft.tokenId) {
+      res.status(400);
+      throw new Error("Cannot list NFT without tokenId");
+    }
+
+    const priceWei = ethers.parseEther(String(updateFields.price)).toString();
+
+    const { txHash, blockNumber } = await listNFTForSale({
+      tokenId: nft.tokenId,
+      priceWei,
+    });
+
+    updateFields.price = Number(updateFields.price);
+    updateFields.isListed = true;
+    updateFields.listTxHash = txHash;
+  }
+
+  // ✅ If user turns sale off, DB update only unless your contract has cancelListing()
+  if (updateFields.isListed === false) {
+    updateFields.price = 0;
   }
 
   const updatedNFT = await NFT.findByIdAndUpdate(
     req.params.id,
-    { $set: req.body },
+    { $set: updateFields },
     { new: true, runValidators: true }
   );
 
